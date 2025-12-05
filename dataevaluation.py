@@ -1,4 +1,4 @@
-# dataevaluation.py - Interaktive Druck-Heatmap mit Slider
+# dataevaluation.py - Interaktive Druck-Heatmap mit Slider - benötigt rainbow csv
 # Benötigt: Python 3, matplotlib, numpy, pandas
 # Installation falls nötig: pip install matplotlib numpy pandas
 
