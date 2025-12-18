@@ -1,130 +1,129 @@
-# dataevaluation.py - Interaktive Druck-Heatmap mit Slider - benötigt rainbow csv
-# Benötigt: Python 3, matplotlib, numpy, pandas
-# Installation falls nötig: pip install matplotlib numpy pandas
+# dataevaluation_perfect_image.py - KEIN STAUCHEN MEHR! Passt sich automatisch an dein Bild an
 
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from matplotlib.widgets import Slider
+import matplotlib.image as mpimg
 import os
 
 # === Konfiguration ===
-CSV_FILE = 'fsr_data.csv'           # Name deiner CSV vom ESP32
-MAX_PRESSURE = 4095                 # Maximaler ADC-Wert (12-Bit), anpassen falls kalibriert
-CMAP = 'hot'                        # Farbskala: 'hot', 'viridis', 'plasma', 'Reds' etc.
+CSV_FILE = 'fsr_data.csv'
+FOOT_IMAGE = 'foot.png'          # Dein eigenes Bild (kann .jpg oder .png sein!)
+MAX_PRESSURE = 4095
+CMAP = 'hot'
 
-# === Positionen der 5 FSRs auf dem Fuß (in cm oder willkürlichen Einheiten) ===
-# Du kannst das an dein Foto anpassen – hier sehr gut passend zu deinem Bild:
-positions = {
-    0: (4.0, 13.5),   # FSR1 - Ferse links
-    1: (6.5, 13.5),   # FSR2 - Ferse rechts
-    2: (3.5, 8.0),    # FSR3 - Mittelfuß links
-    3: (7.5, 7.5),    # FSR4 - Mittelfuß rechts / Ballen
-    4: (5.5, 1.5),    # FSR5 - Großzehe / Vorfuß
+# Positionen der Sensoren (in relativen Einheiten 0-1, damit sie immer passen)
+# Du kannst sie später feinjustieren (z. B. 0.35 → 0.38)
+rel_positions = {
+    0: (0.60, 0.12),  # FSR1 - Ferse (zentral)
+    1: (0.37, 0.67),  # FSR2 - Mittelfuß links
+    2: (0.65, 0.655),  # FSR3 - Mittelfuß rechts
+    3: (0.40, 0.83),  # FSR4 - Großzeh (leicht links vom Zentrum)
+    4: (0.65, 0.79),  # FSR5 - Ringzeh (rechts neben Großzeh, etwas tiefer)
 }
 
 # === Daten laden ===
 if not os.path.exists(CSV_FILE):
     print(f"Fehler: {CSV_FILE} nicht gefunden!")
-    print("Lege die CSV aus dem ESP32 in diesen Ordner.")
     exit()
 
 df = pd.read_csv(CSV_FILE)
-print(f"Geladen: {len(df)} Samples bei {50} Hz → {len(df)/50:.1f} Sekunden")
-
+print(f"Geladen: {len(df)} Samples → {len(df)/50:.1f} Sekunden")
 timestamps = df['timestamp'].values
 data = df[['fsr1', 'fsr2', 'fsr3', 'fsr4', 'fsr5']].values
 
-# === Plot vorbereiten ===
-fig, ax = plt.subplots(figsize=(8, 12))
-plt.subplots_adjust(bottom=0.2)  # Platz für Slider
+# === Bild laden und Plot anpassen ===
+fig, ax = plt.subplots(figsize=(10, 14))
+plt.subplots_adjust(bottom=0.2)
 
-# Fußkontur (optional schöner Hintergrund – du kannst ein Bild laden, wenn du willst)
-foot_outline = plt.Polygon([
-    (2,15), (4,15), (8,14), (9,12), (8,8), (9,4), (7,0), (5,0), (3,4), (4,8), (3,12), (2,15)
-], closed=True, color='lightgray', alpha=0.3, linewidth=2)
-ax.add_patch(foot_outline)
+if os.path.exists(FOOT_IMAGE):
+    img = mpimg.imread(FOOT_IMAGE)
+    img_height, img_width = img.shape[:2]
+    img_aspect = img_width / img_height  # echtes Seitenverhältnis deines Bildes
+    
+    plot_width = 10
+    plot_height = plot_width / img_aspect  # Höhe automatisch anpassen → kein Stauchen!
+    
+    print(f"Dein Bild hat Aspect {img_aspect:.2f} → Plot wird perfekt angepasst auf {plot_width}x{plot_height:.1f}")
+    
+    ax.imshow(img, extent=[0, plot_width, 0, plot_height], aspect='equal', alpha=0.95, zorder=0)
+else:
+    print("Bild nicht gefunden → graue Kontur")
+    plot_width, plot_height = 10, 14
+    foot_outline = plt.Polygon([
+        (2,plot_height),(4,plot_height),(8,plot_height-1),(9,plot_height-3),(8,plot_height-7),
+        (9,plot_height-10),(7,0),(5,0),(3,plot_height-10),(4,plot_height-7),(3,plot_height-3),(2,plot_height)
+    ], closed=True, color='lightgray', alpha=0.3)
+    ax.add_patch(foot_outline)
 
-# Kreise für jeden Sensor
-circles = []
+# Limits setzen (jetzt perfekt auf dein Bild abgestimmt)
+ax.set_xlim(0, plot_width)
+ax.set_ylim(0, plot_height)
+ax.set_aspect('equal')
+ax.axis('off')
+
+# Sensor-Kreise (relative Positionen → skalieren automatisch mit)
+circles, glows, texts = [], [], []
 for i in range(5):
-    x, y = positions[i]
-    circle = Circle((x, y), radius=1.3, linewidth=2, edgecolor='black', facecolor='blue', alpha=0.8)
+    rel_x, rel_y = rel_positions[i]
+    abs_x = rel_x * plot_width
+    abs_y = rel_y * plot_height
+    
+    glow = Circle((abs_x, abs_y), plot_width*0.15, ec='none', fc='yellow', alpha=0)
+    ax.add_patch(glow)
+    glows.append(glow)
+    
+    circle = Circle((abs_x, abs_y), plot_width*0.11, lw=2, ec='black', fc='blue', alpha=0.9)
     ax.add_patch(circle)
     circles.append(circle)
+    
+    text = ax.text(abs_x, abs_y, "0", ha='center', va='center', fontweight='bold', color='white', fontsize=11)
+    texts.append(text)
 
-# Text für Druckwerte (optional)
-texts = []
-for i in range(5):
-    x, y = positions[i]
-    t = ax.text(x, y, "0", ha='center', va='center', fontweight='bold', color='white')
-    texts.append(t)
-
-ax.set_xlim(0, 10)
-ax.set_ylim(-1, 16)
-ax.set_aspect('equal')
-ax.set_title('Live Fußdruck-Visualisierung (FSR 50 Hz)', fontsize=16)
-ax.axis('off')
+ax.set_title('FSR Fußdruck-Heatmap – Perfekt auf dein Bild abgestimmt!', fontsize=16)
 
 # === Slider ===
 slider_ax = plt.axes([0.15, 0.08, 0.70, 0.03])
 slider = Slider(slider_ax, 'Zeitpunkt', 0, len(df)-1, valinit=0, valstep=1)
-slider.valtext.set_visible(False)
 
 def update(val):
     idx = int(slider.val)
     pressures = data[idx]
-    normalized = np.clip(pressures / MAX_PRESSURE, 0, 1)  # 0 bis 1
+    norm = np.clip(pressures / MAX_PRESSURE, 0, 1)
 
-    for i, circle in enumerate(circles):
-        intensity = normalized[i]
-        # Farbe von blau (kein Druck) nach rot/gelb (stark)
-        circle.set_facecolor(plt.cm.get_cmap(CMAP)(intensity))
+    for i in range(5):
+        intensity = norm[i]
+        circles[i].set_facecolor(plt.cm.get_cmap(CMAP)(intensity))
+        glows[i].set_alpha(intensity * 0.6)
+        texts[i].set_text(f"{int(pressures[i])}")
 
-        # Optional: Zahlen anzeigen
-        texts[i].set_text(f"{pressures[i]}")
-
-    # Zeit anzeigen
-    fig.suptitle(f"Timestamp: {timestamps[idx]:.3f}s  |  Sample {idx+1}/{len(df)}  |  "
-                 f"Druck: {[int(p) for p in pressures]}", fontsize=12)
-
+    fig.suptitle(f"Zeit: {timestamps[idx]:.3f}s | Sample {idx+1}/{len(df)} | Druck: {[int(p) for p in pressures]}", fontsize=12)
     fig.canvas.draw_idle()
 
 slider.on_changed(update)
 
-# Startwert setzen
-update(0)
-
-# Play-Button Simulation (optional – drücke Leertaste für Autoplay)
+# Autoplay
 playing = False
 def toggle_play(event):
     global playing
     if event.key == ' ':
         playing = not playing
-        if playing:
-            print("Autoplay gestartet (Leertaste = Pause)")
-        else:
-            print("Pause")
-
+        print("Autoplay " + ("AN" if playing else "AUS"))
 def autoplay():
     if playing:
-        current = int(slider.val)
-        if current < len(df) - 1:
-            slider.set_val(current + 1)
-        else:
-            slider.set_val(0)  # Loop
+        curr = int(slider.val)
+        slider.set_val(curr + 1 if curr < len(df)-1 else 0)
     fig.canvas.draw_idle()
-    plt.pause(0.02)  # ca. 50 Hz
+    plt.pause(0.02)
 
 fig.canvas.mpl_connect('key_press_event', toggle_play)
-timer = fig.canvas.new_timer(interval=20)  # 50 Hz
+timer = fig.canvas.new_timer(interval=20)
 timer.add_callback(autoplay)
 timer.start()
 
-print("\nSteuerung:")
-print("   ← → oder Mausrad: durch die Zeit navigieren")
-print("   Leertaste: Autoplay ein/aus (50 Hz Wiedergabe)")
-print("   Schließen mit Fenster-X")
-
+update(0)
+print("\nJetzt sollte dein Bild perfekt rund und unverzerrt sein!")
+print("Falls Kreise nicht 100% sitzen → ändere die Werte in 'rel_positions' (0.0 bis 1.0)")
 plt.show()
