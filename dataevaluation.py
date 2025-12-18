@@ -99,7 +99,9 @@ def update(val):
         glows[i].set_alpha(intensity * 0.6)
         texts[i].set_text(f"{int(pressures[i])}")
 
-    fig.suptitle(f"Zeit: {timestamps[idx]:.3f}s | Sample {idx+1}/{len(df)} | Druck: {[int(p) for p in pressures]}", fontsize=12)
+    relative_time = timestamps[idx] - timestamps[0]  # Zeit seit Aufnahme-Start
+    fig.suptitle(f"Zeit: {relative_time:.3f} s | Sample {idx+1}/{len(df)} | "
+             f"Druck: {[int(p) for p in pressures]}", fontsize=12)
     fig.canvas.draw_idle()
 
 slider.on_changed(update)
@@ -124,6 +126,4 @@ timer.add_callback(autoplay)
 timer.start()
 
 update(0)
-print("\nJetzt sollte dein Bild perfekt rund und unverzerrt sein!")
-print("Falls Kreise nicht 100% sitzen → ändere die Werte in 'rel_positions' (0.0 bis 1.0)")
 plt.show()
