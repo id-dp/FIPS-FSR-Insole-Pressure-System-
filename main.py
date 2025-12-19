@@ -1,112 +1,115 @@
-# main.py – Final optimierte Version (dein Code + kleine Verbesserungen)
+# main.py - Klassenbasierter FSR-Datenlogger für ESP32
 
 import machine
 import time
 import os
 
-# === Konfiguration ===
-FSR_PINS        = [32, 33, 34, 35, 36]   # ADC1-Pins
-BUTTON_PIN      = 0                      # Boot-Button geht auch, aber GPIO 0 ist ok
-DATA_FILE       = '/fsr_data.csv'
-SAMPLE_RATE_HZ  = 50
-INTERVAL_MS     = 1000 // SAMPLE_RATE_HZ  # = 20
 
-# === Initialisierung ===
-adcs = []
-for pin in FSR_PINS:
-    p = machine.Pin(pin)
-    adc = machine.ADC(p)
-    adc.atten(machine.ADC.ATTN_11DB)      # 0–3.3 V
-    adc.width(machine.ADC.WIDTH_12BIT)    # optional: volle 12-Bit Auflösung
-    adcs.append(adc)
+class FSRDataLogger:
+    def __init__(self, fsr_pins=[32, 33, 34, 35, 36], button_pin=23, data_file='/fsr_data.csv', sample_rate=50):
+        self.fsr_pins = fsr_pins
+        self.button_pin = button_pin
+        self.data_file = data_file
+        self.sample_rate = sample_rate
+        self.interval_ms = 1000 // sample_rate
 
-button = machine.Pin(BUTTON_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
-led    = machine.Pin(2, machine.Pin.OUT)
-led.off()
+        self.adcs = self._init_adcs()
+        self.button = machine.Pin(self.button_pin, machine.Pin.IN, machine.Pin.PULL_UP)
+        self.led = machine.Pin(2, machine.Pin.OUT)
+        self.led.off()
 
-recording       = False
-last_state      = 1
-debounce_ms     = 50
-last_status_ms  = 0
+        self.recording = False
+        self.last_button_state = 1
+        self.last_status_ms = 0
 
-# === Funktionen ===
-def start_recording():
-    global recording
-    if recording:
-        return
-    print("\n>>> AUFNAHME GESTARTET <<<")
-    try:
-        with open(DATA_FILE, 'w') as f:
-            f.write('timestamp,fsr1,fsr2,fsr3,fsr4,fsr5\n')
-        recording = True
-        led.on()
-    except OSError:
-        print("Kann Datei nicht erstellen – SD voll?")
-        recording = False
+    def _init_adcs(self):
+        adcs = []
+        for pin in self.fsr_pins:
+            p = machine.Pin(pin)
+            adc = machine.ADC(p)
+            adc.atten(machine.ADC.ATTN_11DB)
+            adc.width(machine.ADC.WIDTH_12BIT)
+            adcs.append(adc)
+        return adcs
 
-def stop_recording():
-    global recording
-    if not recording:
-        return
-    size = os.stat(DATA_FILE)[6] if DATA_FILE in os.listdir() else 0
-    samples = sum(1 for _ in open(DATA_FILE)) - 1  # -1 für Header
-    duration = samples / SAMPLE_RATE_HZ
-    print(f"\n>>> AUFNAHME GESTOPPT <<<")
-    print(f"    {samples} Samples · {duration:.1f} s · {size} Bytes")
-    recording = False
-    led.off()
-
-def toggle_recording():
-    global recording
-    if recording:
-        stop_recording()
-    else:
-        start_recording()
-
-# === Button-Entprellung ===
-def check_button():
-    global last_state
-    state = button.value()
-    if state == 0 and last_state == 1:              # fallende Flanke
-        time.sleep_ms(debounce_ms)
-        if button.value() == 0:                     # wirklich gedrückt
-            toggle_recording()
-            while button.value() == 0:              # warten bis losgelassen
-                time.sleep_ms(10)
-    last_state = state
-
-# === Hauptloop ===
-print("FSR-Datenlogger bereit – Button drücken zum Start/Stop")
-
-while True:
-    check_button()
-
-    if recording:
-        t0 = time.ticks_ms()
-
-        values = [adc.read() for adc in adcs]
-        timestamp = time.time()
-
-        line = f"{timestamp:.3f},{values[0]},{values[1]},{values[2]},{values[3]},{values[4]}\n"
-
+    def start_recording(self):
+        if self.recording:
+            return
+        print("\n>>> AUFNAHME GESTARTET <<<")
         try:
-            with open(DATA_FILE, 'a') as f:
-                f.write(line)
-        except OSError as e:
-            print("Speicherfehler!", e)
-            stop_recording()
+            with open(self.data_file, 'w') as f:
+                header = 'timestamp,' + ','.join([f'fsr{i+1}' for i in range(len(self.fsr_pins))]) + '\n'
+                f.write(header)
+            self.recording = True
+            self.led.on()
+        except OSError:
+            print("Kann Datei nicht erstellen – Speicher voll?")
+            self.recording = False
 
-        # präzises Timing
-        elapsed = time.ticks_diff(time.ticks_ms(), t0)
-        if elapsed < INTERVAL_MS:
-            time.sleep_ms(INTERVAL_MS - elapsed)
+    def stop_recording(self):
+        if not self.recording:
+            return
+        try:
+            size = os.stat(self.data_file)[6]
+            samples = sum(1 for _ in open(self.data_file)) - 1
+            duration = samples / self.sample_rate
+            print(f"\n>>> AUFNAHME GESTOPPT <<<")
+            print(f"    {samples} Samples · {duration:.1f} s · {size} Bytes")
+        except:
+            print("\n>>> AUFNAHME GESTOPPT <<<")
+        self.recording = False
+        self.led.off()
 
-    else:
-        time.sleep_ms(10)  # CPU entlasten
+    def toggle_recording(self):
+        if self.recording:
+            self.stop_recording()
+        else:
+            self.start_recording()
 
-    # Statusmeldung alle 10 Sekunden
-    now = time.ticks_ms()
-    if recording and time.ticks_diff(now, last_status_ms) > 10000:
-        size = os.stat(DATA_FILE)[6] if DATA_FILE in os.listdir() else 0
-        print(f"Aufnahme läuft… {size//1024} KB")
-        last_status_ms = now
+    def check_button(self):
+        state = self.button.value()
+        if state == 0 and self.last_button_state == 1:
+            time.sleep_ms(50)
+            if self.button.value() == 0:
+                self.toggle_recording()
+                while self.button.value() == 0:
+                    time.sleep_ms(10)
+        self.last_button_state = state
+
+    def run(self):
+        print("FSR-Datenlogger bereit – Button drücken zum Start/Stop")
+        while True:
+            self.check_button()
+
+            if self.recording:
+                t0 = time.ticks_ms()
+
+                values = [adc.read() for adc in self.adcs]
+                timestamp = time.time()
+                line = f"{timestamp:.3f},{','.join(map(str, values))}\n"
+
+                try:
+                    with open(self.data_file, 'a') as f:
+                        f.write(line)
+                except OSError as e:
+                    print("Speicherfehler!", e)
+                    self.stop_recording()
+
+                elapsed = time.ticks_diff(time.ticks_ms(), t0)
+                if elapsed < self.interval_ms:
+                    time.sleep_ms(self.interval_ms - elapsed)
+            else:
+                time.sleep_ms(10)
+
+            if self.recording and time.ticks_diff(time.ticks_ms(), self.last_status_ms) > 10000:
+                try:
+                    size = os.stat(self.data_file)[6]
+                    print(f"Aufnahme läuft… {size//1024} KB")
+                except:
+                    pass
+                self.last_status_ms = time.ticks_ms()
+
+
+# === Start ===
+logger = FSRDataLogger()
+logger.run()

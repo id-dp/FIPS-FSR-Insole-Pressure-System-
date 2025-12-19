@@ -1,4 +1,4 @@
-# dataevaluation_perfect_image.py - KEIN STAUCHEN MEHR! Passt sich automatisch an dein Bild an
+# dataevaluation.py - Klassenbasierte Fußdruck-Visualisierung
 
 import pandas as pd
 import numpy as np
@@ -8,122 +8,143 @@ from matplotlib.widgets import Slider
 import matplotlib.image as mpimg
 import os
 
-# === Konfiguration ===
-CSV_FILE = 'fsr_data.csv'
-FOOT_IMAGE = 'foot.png'          # Dein eigenes Bild (kann .jpg oder .png sein!)
-MAX_PRESSURE = 4095
-CMAP = 'hot'
 
-# Positionen der Sensoren (in relativen Einheiten 0-1, damit sie immer passen)
-# Du kannst sie später feinjustieren (z. B. 0.35 → 0.38)
-rel_positions = {
-    0: (0.60, 0.12),  # FSR1 - Ferse (zentral)
-    1: (0.37, 0.67),  # FSR2 - Mittelfuß links
-    2: (0.65, 0.655),  # FSR3 - Mittelfuß rechts
-    3: (0.40, 0.83),  # FSR4 - Großzeh (leicht links vom Zentrum)
-    4: (0.65, 0.79),  # FSR5 - Ringzeh (rechts neben Großzeh, etwas tiefer)
-}
+class FootPressureVisualizer:
+    def __init__(self, csv_file='fsr_data.csv', foot_image='foot.png', max_pressure=4095, cmap='hot'):
+        self.csv_file = csv_file
+        self.foot_image = foot_image
+        self.max_pressure = max_pressure
+        self.cmap = cmap
 
-# === Daten laden ===
-if not os.path.exists(CSV_FILE):
-    print(f"Fehler: {CSV_FILE} nicht gefunden!")
-    exit()
+        # Relative Sensorpositionen (0.0 bis 1.0) – leicht angepasst an deine letzte Version
+        self.rel_positions = {
+            0: (0.60, 0.12),   # Ferse zentral
+            1: (0.37, 0.67),   # Mittelfuß links
+            2: (0.65, 0.655),  # Mittelfuß rechts
+            3: (0.40, 0.83),   # Großzeh
+            4: (0.65, 0.79),   # Ringzeh
+        }
 
-df = pd.read_csv(CSV_FILE)
-print(f"Geladen: {len(df)} Samples → {len(df)/50:.1f} Sekunden")
-timestamps = df['timestamp'].values
-data = df[['fsr1', 'fsr2', 'fsr3', 'fsr4', 'fsr5']].values
+        self.df = None
+        self.timestamps = None
+        self.data = None
+        self.fig = None
+        self.ax = None
+        self.slider = None
+        self.circles = []
+        self.glows = []
+        self.texts = []
+        self.playing = False
 
-# === Bild laden und Plot anpassen ===
-fig, ax = plt.subplots(figsize=(10, 14))
-plt.subplots_adjust(bottom=0.2)
+        self._load_data()
+        self._setup_plot()
+        self._setup_interaction()
 
-if os.path.exists(FOOT_IMAGE):
-    img = mpimg.imread(FOOT_IMAGE)
-    img_height, img_width = img.shape[:2]
-    img_aspect = img_width / img_height  # echtes Seitenverhältnis deines Bildes
-    
-    plot_width = 10
-    plot_height = plot_width / img_aspect  # Höhe automatisch anpassen → kein Stauchen!
-    
-    print(f"Dein Bild hat Aspect {img_aspect:.2f} → Plot wird perfekt angepasst auf {plot_width}x{plot_height:.1f}")
-    
-    ax.imshow(img, extent=[0, plot_width, 0, plot_height], aspect='equal', alpha=0.95, zorder=0)
-else:
-    print("Bild nicht gefunden → graue Kontur")
-    plot_width, plot_height = 10, 14
-    foot_outline = plt.Polygon([
-        (2,plot_height),(4,plot_height),(8,plot_height-1),(9,plot_height-3),(8,plot_height-7),
-        (9,plot_height-10),(7,0),(5,0),(3,plot_height-10),(4,plot_height-7),(3,plot_height-3),(2,plot_height)
-    ], closed=True, color='lightgray', alpha=0.3)
-    ax.add_patch(foot_outline)
+    def _load_data(self):
+        if not os.path.exists(self.csv_file):
+            raise FileNotFoundError(f"CSV-Datei '{self.csv_file}' nicht gefunden!")
+        
+        self.df = pd.read_csv(self.csv_file)
+        print(f"Geladen: {len(self.df)} Samples → {len(self.df)/50:.1f} Sekunden")
+        
+        self.timestamps = self.df['timestamp'].values
+        self.data = self.df[['fsr1', 'fsr2', 'fsr3', 'fsr4', 'fsr5']].values
 
-# Limits setzen (jetzt perfekt auf dein Bild abgestimmt)
-ax.set_xlim(0, plot_width)
-ax.set_ylim(0, plot_height)
-ax.set_aspect('equal')
-ax.axis('off')
+    def _setup_plot(self):
+        self.fig, self.ax = plt.subplots(figsize=(10, 14))
+        plt.subplots_adjust(bottom=0.2)
 
-# Sensor-Kreise (relative Positionen → skalieren automatisch mit)
-circles, glows, texts = [], [], []
-for i in range(5):
-    rel_x, rel_y = rel_positions[i]
-    abs_x = rel_x * plot_width
-    abs_y = rel_y * plot_height
-    
-    glow = Circle((abs_x, abs_y), plot_width*0.15, ec='none', fc='yellow', alpha=0)
-    ax.add_patch(glow)
-    glows.append(glow)
-    
-    circle = Circle((abs_x, abs_y), plot_width*0.11, lw=2, ec='black', fc='blue', alpha=0.9)
-    ax.add_patch(circle)
-    circles.append(circle)
-    
-    text = ax.text(abs_x, abs_y, "0", ha='center', va='center', fontweight='bold', color='white', fontsize=11)
-    texts.append(text)
+        plot_width = 10
+        plot_height = 14
 
-ax.set_title('FSR Fußdruck-Heatmap – Perfekt auf dein Bild abgestimmt!', fontsize=16)
+        # Bild laden und Aspect Ratio anpassen
+        if os.path.exists(self.foot_image):
+            img = mpimg.imread(self.foot_image)
+            img_height, img_width = img.shape[:2]
+            img_aspect = img_width / img_height
+            plot_height = plot_width / img_aspect
+            print(f"Bild-Aspect: {img_aspect:.2f} → Plot: {plot_width} x {plot_height:.1f}")
 
-# === Slider ===
-slider_ax = plt.axes([0.15, 0.08, 0.70, 0.03])
-slider = Slider(slider_ax, 'Zeitpunkt', 0, len(df)-1, valinit=0, valstep=1)
+            self.ax.imshow(img, extent=[0, plot_width, 0, plot_height], aspect='equal', alpha=0.95, zorder=0)
+        else:
+            print("Bild nicht gefunden → Fallback-Kontur")
+            foot_outline = plt.Polygon([
+                (2, plot_height), (4, plot_height), (8, plot_height-1), (9, plot_height-3),
+                (8, plot_height-7), (9, plot_height-10), (7, 0), (5, 0),
+                (3, plot_height-10), (4, plot_height-7), (3, plot_height-3), (2, plot_height)
+            ], closed=True, color='lightgray', alpha=0.3)
+            self.ax.add_patch(foot_outline)
 
-def update(val):
-    idx = int(slider.val)
-    pressures = data[idx]
-    norm = np.clip(pressures / MAX_PRESSURE, 0, 1)
+        self.ax.set_xlim(0, plot_width)
+        self.ax.set_ylim(0, plot_height)
+        self.ax.set_aspect('equal')
+        self.ax.axis('off')
+        self.ax.set_title('FSR Fußdruck-Heatmap', fontsize=16)
 
-    for i in range(5):
-        intensity = norm[i]
-        circles[i].set_facecolor(plt.cm.get_cmap(CMAP)(intensity))
-        glows[i].set_alpha(intensity * 0.6)
-        texts[i].set_text(f"{int(pressures[i])}")
+        # Sensoren zeichnen
+        for i in range(5):
+            rel_x, rel_y = self.rel_positions[i]
+            x = rel_x * plot_width
+            y = rel_y * plot_height
 
-    relative_time = timestamps[idx] - timestamps[0]  # Zeit seit Aufnahme-Start
-    fig.suptitle(f"Zeit: {relative_time:.3f} s | Sample {idx+1}/{len(df)} | "
-             f"Druck: {[int(p) for p in pressures]}", fontsize=12)
-    fig.canvas.draw_idle()
+            glow = Circle((x, y), plot_width * 0.15, ec='none', fc='yellow', alpha=0)
+            self.ax.add_patch(glow)
+            self.glows.append(glow)
 
-slider.on_changed(update)
+            circle = Circle((x, y), plot_width * 0.11, lw=2, ec='black', fc='blue', alpha=0.9)
+            self.ax.add_patch(circle)
+            self.circles.append(circle)
 
-# Autoplay
-playing = False
-def toggle_play(event):
-    global playing
-    if event.key == ' ':
-        playing = not playing
-        print("Autoplay " + ("AN" if playing else "AUS"))
-def autoplay():
-    if playing:
-        curr = int(slider.val)
-        slider.set_val(curr + 1 if curr < len(df)-1 else 0)
-    fig.canvas.draw_idle()
-    plt.pause(0.02)
+            text = self.ax.text(x, y, "0", ha='center', va='center', fontweight='bold',
+                                color='white', fontsize=11)
+            self.texts.append(text)
 
-fig.canvas.mpl_connect('key_press_event', toggle_play)
-timer = fig.canvas.new_timer(interval=20)
-timer.add_callback(autoplay)
-timer.start()
+    def _setup_interaction(self):
+        # Slider
+        slider_ax = plt.axes([0.15, 0.08, 0.70, 0.03])
+        self.slider = Slider(slider_ax, 'Zeitpunkt', 0, len(self.df)-1, valinit=0, valstep=1)
+        self.slider.on_changed(self._update)
 
-update(0)
-plt.show()
+        # Autoplay mit Leertaste
+        self.fig.canvas.mpl_connect('key_press_event', self._toggle_play)
+        timer = self.fig.canvas.new_timer(interval=20)
+        timer.add_callback(self._autoplay)
+        timer.start()
+
+        self._update(0)
+
+    def _update(self, val):
+        idx = int(self.slider.val)
+        pressures = self.data[idx]
+        norm = np.clip(pressures / self.max_pressure, 0, 1)
+
+        for i in range(5):
+            intensity = norm[i]
+            self.circles[i].set_facecolor(plt.cm.get_cmap(self.cmap)(intensity))
+            self.glows[i].set_alpha(intensity * 0.6)
+            self.texts[i].set_text(f"{int(pressures[i])}")
+
+        rel_time = self.timestamps[idx] - self.timestamps[0]
+        self.fig.suptitle(f"Zeit: {rel_time:.3f} s | Sample {idx+1}/{len(self.df)} | "
+                          f"Druck: {[int(p) for p in pressures]}", fontsize=12)
+        self.fig.canvas.draw_idle()
+
+    def _toggle_play(self, event):
+        if event.key == ' ':
+            self.playing = not self.playing
+            print("Autoplay " + ("AN" if self.playing else "AUS"))
+
+    def _autoplay(self):
+        if self.playing:
+            curr = int(self.slider.val)
+            new_val = curr + 1 if curr < len(self.df) - 1 else 0
+            self.slider.set_val(new_val)
+
+    def show(self):
+        plt.show()
+
+
+# === Start ===
+if __name__ == "__main__":
+    viz = FootPressureVisualizer(csv_file='fsr_data.csv', foot_image='foot.png')
+    viz.show()
