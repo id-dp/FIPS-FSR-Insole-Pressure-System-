@@ -6,7 +6,7 @@ import os
 
 
 class FSRDataLogger:
-    def __init__(self, fsr_pins=[32, 33, 34, 35, 36], button_pin=23, data_file='/fsr_data.csv', sample_rate=50):
+    def __init__(self, fsr_pins=[32, 33, 34, 35, 25], button_pin=23, data_file='/fsr_data.csv', sample_rate=50):
         self.fsr_pins = fsr_pins
         self.button_pin = button_pin
         self.data_file = data_file
